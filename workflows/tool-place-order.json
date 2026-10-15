@@ -1,0 +1,374 @@
+{
+  "name": "Tool - Place Order",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "customer_name"
+            },
+            {
+              "name": "contact"
+            },
+            {
+              "name": "items"
+            },
+            {
+              "name": "pickup_date"
+            },
+            {
+              "name": "confirm",
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_WITH_MENU_TABLE_ID",
+          "cachedResultName": "menu"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "available",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "name": "Get Menu Rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        0
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Order: validate the order, check the pickup date, and calculate the total.\n// The LLM never does the math or the calendar checks. This code does.\nconst input = $('When Executed by Another Workflow').first().json;\nconst menu = $input.all().map(i => i.json).filter(r => r.item); // skip the empty item from \"Always Output Data\"\n\nconst fail = (error) => [{ json: { ok: false, error } }];\n\n// ---------- 1. Customer details ----------\n// The contact number identifies the customer. If they're already in the customers table,\n// use the saved full name instead of whatever the agent typed (e.g. \"Juan\" -> \"Juan Dela Cruz\").\nconst contact = String(input.contact || '').trim();\nif (!contact) {\n  return fail('Missing contact. Reuse it from earlier in this conversation; only ask the customer if they never gave it.');\n}\nconst saved = $('Get Customer').all().map(i => i.json).find(r => r.contact === contact);\nconst customerName = (saved && saved.name) ? String(saved.name).trim() : String(input.customer_name || '').trim();\nif (!customerName) {\n  return fail('Missing customer_name for a new customer. Ask the customer for their full name.');\n}\n\n// ---------- 2. Items: must exist on today's menu ----------\n// items arrives as a JSON string like [{\"item\":\"Ube Ensaymada\",\"qty\":6}]\nlet items;\ntry {\n  items = typeof input.items === 'string' ? JSON.parse(input.items) : input.items;\n} catch (e) {\n  return fail('items must be a JSON array like [{\"item\":\"Ube Ensaymada\",\"qty\":6}]');\n}\nif (!Array.isArray(items) || items.length === 0) return fail('The order has no items.');\n\nlet total = 0;\nconst lines = [];\nfor (const it of items) {\n  const name = String(it.item || '').toLowerCase().trim();\n  const m = menu.find(r => String(r.item).toLowerCase().trim() === name);\n  if (!m) return fail(`\"${it.item}\" is not available today.`);\n\n  const qty = Number(it.qty);\n  if (!Number.isInteger(qty) || qty <= 0 || qty > 200) {\n    return fail(`Invalid quantity for ${m.item}.`);\n  }\n  total += m.price * qty;\n  lines.push(`${qty} x ${m.item} @ ₱${m.price}`);\n}\n\n// ---------- 3. Pickup date: format, lead time, closed Mondays, store hours ----------\nconst raw = String(input.pickup_date || '').trim();\nconst d = raw.match(/^(\\d{4}-\\d{2}-\\d{2})(?:[ T](\\d{1,2}):(\\d{2}))?$/);\nif (!d) {\n  return fail('pickup_date must be \"YYYY-MM-DD\" or \"YYYY-MM-DD HH:MM\" (24-hour), e.g. \"2026-10-20 10:00\". Convert the customer\\'s words to this format.');\n}\n\nconst tz = 'Asia/Manila';                                        // Philippine time, not server time\nconst day = DateTime.fromISO(d[1], { zone: tz });\nif (!day.isValid) return fail(`\"${d[1]}\" is not a real date.`);\n\nconst today = DateTime.now().setZone(tz).startOf('day');\nconst fmt = (x) => x.toFormat('cccc, LLL d');                    // e.g. \"Tuesday, Oct 20\"\nconst skipMonday = (x) => (x.weekday === 1 ? x.plus({ days: 1 }) : x); // Luxon: 1 = Monday\nconst earliest = skipMonday(today.plus({ days: 1 }));\n\nif (day < today.plus({ days: 1 })) {\n  return fail(`Orders need at least 1 day lead time. The earliest pickup is ${fmt(earliest)}.`);\n}\nif (day.weekday === 1) {\n  return fail(`${fmt(day)} is a Monday and the store is closed. Suggest ${fmt(day.plus({ days: 1 }))} instead.`);\n}\n\nlet pickupTime = '';\nif (d[2]) {\n  const minutes = Number(d[2]) * 60 + Number(d[3]);\n  if (minutes < 9 * 60 || minutes > 18 * 60) {\n    return fail('Pickup time must be between 09:00 and 18:00.');\n  }\n  pickupTime = ` ${d[2].padStart(2, '0')}:${d[3]}`;\n}\n\n// ---------- 4. All good: return the validated order ----------\nreturn [{\n  json: {\n    ok: true,\n    confirm: input.confirm === true || input.confirm === 'true',\n    customer_name: customerName,      // saved full name when we know the customer\n    contact,\n    items: lines.join('; '),\n    total,\n    pickup_date: d[1] + pickupTime,   // e.g. \"2026-10-20 10:00\" (sortable, saved to the table)\n    pickup_day: fmt(day),             // e.g. \"Tuesday, Oct 20\" (for the agent to show the customer)\n    status: 'new',\n  },\n}];"
+      },
+      "name": "Build Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ff4afe21-6d12-4346-8893-99db6c4e667e",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "a680a54b-469f-4a4d-9d36-49ecaf90d9cc",
+              "leftValue": "={{ $json.confirm }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Save?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_WITH_ORDERS_TABLE_ID",
+          "cachedResultName": "orders"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "customer_name": "={{ $json.customer_name }}",
+            "contact": "={{ $json.contact }}",
+            "items": "={{ $json.items }}",
+            "total": "={{ $json.total }}",
+            "pickup_date": "={{ $json.pickup_date }}",
+            "status": "={{ $json.status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "customer_name",
+              "displayName": "customer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "contact",
+              "displayName": "contact",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "items",
+              "displayName": "items",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "total",
+              "displayName": "total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "pickup_date",
+              "displayName": "pickup_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "name": "Insert Order",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "77f2d659-c1be-490f-a3bb-7be1f82329aa",
+              "name": "ok",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "d0a50c11-2b7d-4c81-9120-2659de07a282",
+              "name": "saved",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "8e65f965-a264-46c7-b497-8c65a1381e21",
+              "name": "order_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "a28bf3f7-166e-4383-8e6b-9cce25e4347d",
+              "name": "total",
+              "value": "={{ $('Build Order').item.json.total }}",
+              "type": "number"
+            },
+            {
+              "id": "beb359a2-dd13-4df0-a120-cdd9b508b6ee",
+              "name": "items",
+              "value": "={{ $('Build Order').item.json.items }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Return Confirmation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1344,
+        -96
+      ]
+    },
+    {
+      "parameters": {},
+      "name": "Return Quote or Error",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_WITH_CUSTOMERS_TABLE_ID",
+          "cachedResultName": "customers"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "contact",
+              "keyValue": "={{ $json.contact }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Customer",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Get Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Menu Rows": {
+      "main": [
+        [
+          {
+            "node": "Build Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Order": {
+      "main": [
+        [
+          {
+            "node": "Save?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save?": {
+      "main": [
+        [
+          {
+            "node": "Insert Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Quote or Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Order": {
+      "main": [
+        [
+          {
+            "node": "Return Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Customer": {
+      "main": [
+        [
+          {
+            "node": "Get Menu Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

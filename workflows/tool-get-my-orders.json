@@ -1,0 +1,90 @@
+{
+  "name": "Tool - Get My Orders",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "contact"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -176,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_WITH_ORDERS_TABLE_ID",
+          "cachedResultName": "orders"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "contact",
+              "keyValue": "={{ $json.contact }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "name": "Get Orders",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        64,
+        208
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return a clean list of this customer's ACTIVE orders for the agent\nconst contact = String($('When Executed by Another Workflow').first().json.contact || '').trim();\nif (!contact) {\n  return [{ json: { found: false, error: 'contact is required. Call again with the customer\\'s phone number, e.g. {\"contact\":\"09000000001\"}' } }];\n}\n\n// Keep only real rows for this exact contact (\"Always Output Data\" can add an empty item),\n// and hide cancelled orders so the agent never treats them as active.\nconst orders = $input.all()\n  .map(i => i.json)\n  .filter(r => r.id && r.contact === contact && r.status !== 'cancelled')\n  .map(r => ({\n    order_id: r.id,\n    customer_name: r.customer_name,\n    items: r.items,\n    total_php: r.total,\n    pickup_date: r.pickup_date,\n    status: r.status,\n  }))\n  .sort((a, b) => String(a.pickup_date).localeCompare(String(b.pickup_date)));\n\nreturn [{ json: { found: orders.length > 0, count: orders.length, orders } }];"
+      },
+      "name": "Format Orders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        208
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Get Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Orders": {
+      "main": [
+        [
+          {
+            "node": "Format Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

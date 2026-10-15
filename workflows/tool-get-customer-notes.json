@@ -1,0 +1,89 @@
+{
+  "name": "Tool - Get Customer Notes",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "contact"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        208,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_WITH_CUSTOMERS_TABLE_ID",
+          "cachedResultName": "customers"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "contact",
+              "keyValue": "={{ $json.contact }}"
+            }
+          ]
+        }
+      },
+      "name": "Get row(s)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        432,
+        -32
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const contact = String($('When Executed by Another Workflow').first().json.contact || '').trim();\nif (!contact) {\n  return [{ json: { found: false, error: 'contact is required. Call again with the customer\\'s phone number, e.g. {\"contact\":\"09000000001\"}' } }];\n}\nconst row = $input.all().map(i => i.json).find(r => r.contact === contact);\nreturn [{ json: row\n  ? { found: true, name: row.name, notes: row.notes || '' }\n  : { found: false } }];"
+      },
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -32
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Get row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

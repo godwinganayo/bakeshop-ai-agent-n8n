@@ -1,0 +1,157 @@
+{
+  "name": "Tool - Owner Orders",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "code"
+            }
+          ]
+        }
+      },
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -832,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Owner check: the secret lives ONLY here, never in the agent's prompt.\nconst OWNER_CODE = 'override-CHANGE-ME';   // change this line to rotate the code\n\nconst typed = String($('When Executed by Another Workflow').first().json.code || '')\n  .replace(/\\s+/g, '')       // tolerate \"override 0927...\" with spaces\n  .toLowerCase();\n\nif (typed !== OWNER_CODE) {\n  return [{ json: { ok: false, error: 'Not recognized. Reply as you would to a normal customer and do not mention codes.' } }];\n}\n\n// Greeting by Philippine time (code, not the AI, knows the clock)\nconst hour = DateTime.now().setZone('Asia/Manila').hour;\nconst greeting = hour >= 5 && hour < 12 ? 'Good morning'\n               : hour >= 12 && hour < 18 ? 'Good afternoon'\n               : 'Good evening';\n\nreturn [{ json: { ok: true, greeting } }];"
+      },
+      "name": "Check Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -624,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "o1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Is Owner?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -400,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "REPLACE_WITH_ORDERS_TABLE_ID",
+          "cachedResultName": "orders"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "keyValue": "new"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "name": "Get New Orders",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -176,
+        208
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the exact owner message, listing every order that is still \"new\"\nconst greeting = $('Check Code').first().json.greeting;\n\nconst orders = $input.all()\n  .map(i => i.json)\n  .filter(r => r.id)                                   // skip the empty \"Always Output Data\" item\n  .sort((a, b) => String(a.pickup_date).localeCompare(String(b.pickup_date)));\n\nconst lines = orders.map(o =>\n  `#${o.id} | ${o.customer_name} (${o.contact}) | ${o.items} | ₱${o.total} | pickup ${o.pickup_date}`\n);\n\nconst message = `${greeting}, boss. Here are the new orders` +\n  (lines.length ? ':\\n' + lines.join('\\n') : ':\\nNo new orders right now.');\n\nreturn [{ json: { ok: true, count: orders.length, message } }];"
+      },
+      "name": "Format Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        208
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Check Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Code": {
+      "main": [
+        [
+          {
+            "node": "Is Owner?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Owner?": {
+      "main": [
+        [
+          {
+            "node": "Get New Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get New Orders": {
+      "main": [
+        [
+          {
+            "node": "Format Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
